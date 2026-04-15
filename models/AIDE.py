@@ -7,7 +7,7 @@ from .srm_filter_kernel import all_normalized_hpf_list
 import numpy as np
 
 DEFAULT_RESNET50_URL = "https://download.pytorch.org/models/resnet50-0676ba61.pth"
-DEFAULT_CONVNEXT_BASE_PRETRAINED = "laion2b_s34b_b82k_augreg"
+DEFAULT_CONVNEXT_XXL_PRETRAINED = "laion2b_s34b_b82k_augreg_soup"
 
 
 def _unwrap_state_dict(checkpoint):
@@ -266,28 +266,28 @@ class AIDE_Model(nn.Module):
         self.fc = Mlp(2048 + 256 , 1024, 2)
 
         if not convnext_path:
-            convnext_path = DEFAULT_CONVNEXT_BASE_PRETRAINED
-            print(f"load default OpenCLIP ConvNeXt-Base from model zoo: {convnext_path}")
+            convnext_path = DEFAULT_CONVNEXT_XXL_PRETRAINED
+            print(f"load default OpenCLIP ConvNeXt-XXLarge from model zoo: {convnext_path}")
         else:
-            print(f"load OpenCLIP ConvNeXt-Base from {convnext_path}")
+            print(f"load OpenCLIP ConvNeXt-XXLarge from {convnext_path}")
 
-        print("build model with convnext_base")
-        self.openclip_convnext_base, _, _ = open_clip.create_model_and_transforms(
-            "convnext_base", pretrained=convnext_path
+        print("build model with convnext_xxlarge")
+        self.openclip_convnext_xxl, _, _ = open_clip.create_model_and_transforms(
+            "convnext_xxlarge", pretrained=convnext_path
         )
 
-        self.openclip_convnext_base = self.openclip_convnext_base.visual.trunk
-        self.openclip_convnext_base.head.global_pool = nn.Identity()
-        self.openclip_convnext_base.head.flatten = nn.Identity()
+        self.openclip_convnext_xxl = self.openclip_convnext_xxl.visual.trunk
+        self.openclip_convnext_xxl.head.global_pool = nn.Identity()
+        self.openclip_convnext_xxl.head.flatten = nn.Identity()
 
-        self.openclip_convnext_base.eval()
+        self.openclip_convnext_xxl.eval()
         
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.convnext_proj = nn.Sequential(
-            nn.Linear(1024, 256),
+            nn.Linear(3072, 256),
 
         )
-        for param in self.openclip_convnext_base.parameters():
+        for param in self.openclip_convnext_xxl.parameters():
             param.requires_grad = False
 
     
@@ -316,10 +316,10 @@ class AIDE_Model(nn.Module):
             dinov2_mean = torch.Tensor([0.485, 0.456, 0.406]).to(tokens, non_blocking=True).view(3, 1, 1)
             dinov2_std = torch.Tensor([0.229, 0.224, 0.225]).to(tokens, non_blocking=True).view(3, 1, 1)
 
-            local_convnext_image_feats = self.openclip_convnext_base(
+            local_convnext_image_feats = self.openclip_convnext_xxl(
                 tokens * (dinov2_std / clip_std) + (dinov2_mean - clip_mean) / clip_std
-            ) #[b, 1024, 8, 8]
-            assert local_convnext_image_feats.size()[1:] == (1024, 8, 8)
+            ) #[b, 3072, 8, 8]
+            assert local_convnext_image_feats.size()[1:] == (3072, 8, 8)
             local_convnext_image_feats = self.avgpool(local_convnext_image_feats).view(tokens.size(0), -1)
             x_0 = self.convnext_proj(local_convnext_image_feats)
 
