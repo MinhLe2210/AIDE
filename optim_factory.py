@@ -9,22 +9,18 @@
 import torch
 from torch import optim as optim
 
-from timm.optim.adafactor import Adafactor
-from timm.optim.adahessian import Adahessian
-from timm.optim.adamp import AdamP
-from timm.optim.lookahead import Lookahead
+from timm.optim import Adafactor
+from timm.optim import Adahessian
+from timm.optim import AdamP
+from timm.optim import Lookahead
+from timm.optim import Nadam
 # from timm.optim.novograd import NovoGrad
 # from timm.optim.nvnovograd import NvNovoGrad
-from timm.optim.radam import RAdam
-from timm.optim.rmsprop_tf import RMSpropTF
-from timm.optim.sgdp import SGDP
+from timm.optim import RAdam
+from timm.optim import RMSpropTF
+from timm.optim import SGDP
 
 import json
-
-try:
-    from timm.optim.nadam import Nadam
-except ImportError:
-    Nadam = getattr(optim, "NAdam", None)
 
 try:
     from apex.optimizers import FusedNovoGrad, FusedAdam, FusedLAMB, FusedSGD
@@ -178,8 +174,6 @@ def create_optimizer(args, model, get_num_layer=None, get_layer_scale=None, filt
     elif opt_lower == 'adamw':
         optimizer = optim.AdamW(parameters, **opt_args)
     elif opt_lower == 'nadam':
-        if Nadam is None:
-            raise ImportError("NAdam optimizer is not available in this PyTorch/timm installation")
         optimizer = Nadam(parameters, **opt_args)
     elif opt_lower == 'radam':
         optimizer = RAdam(parameters, **opt_args)
