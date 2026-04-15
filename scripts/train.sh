@@ -76,10 +76,10 @@ fi
 # Extra CLI args override or extend the defaults above.
 PY_ARGS+=("$@")
 
-python -m torch.distributed.launch \
-    --nproc_per_node "${GPU_NUM}" \
-    --nnodes "${WORLD_SIZE}" \
-    --node_rank "${RANK}" \
-    --master_addr "${MASTER_ADDR}" \
-    --master_port "${MASTER_PORT}" \
+torchrun \
+    --nproc_per_node="${GPU_NUM}" \
+    --nnodes="${WORLD_SIZE}" \
+    --node_rank="${RANK}" \
+    --master_addr="${MASTER_ADDR}" \
+    --master_port="${MASTER_PORT}" \
     "${PY_ARGS[@]}"
