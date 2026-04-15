@@ -6,6 +6,54 @@ import open_clip
 from .srm_filter_kernel import all_normalized_hpf_list
 import numpy as np
 
+DEFAULT_RESNET50_URL = "https://download.pytorch.org/models/resnet50-0676ba61.pth"
+DEFAULT_CONVNEXT_BASE_PRETRAINED = "laion2b_s34b_b82k_augreg"
+
+
+def _unwrap_state_dict(checkpoint):
+    if not isinstance(checkpoint, dict):
+        return checkpoint
+
+    for key in ("state_dict", "model", "module"):
+        if key in checkpoint and isinstance(checkpoint[key], dict):
+            checkpoint = checkpoint[key]
+            break
+
+    return {
+        key.replace("module.", "", 1): value
+        for key, value in checkpoint.items()
+    }
+
+
+def _load_resnet_weights(resnet_path):
+    if resnet_path:
+        print(f"load resnet checkpoint from {resnet_path}")
+        checkpoint = torch.load(resnet_path, map_location="cpu")
+    else:
+        print(f"load default ImageNet ResNet50 from model zoo: {DEFAULT_RESNET50_URL}")
+        checkpoint = model_zoo.load_url(DEFAULT_RESNET50_URL, map_location="cpu")
+
+    return _unwrap_state_dict(checkpoint)
+
+
+def _load_matching_resnet_weights(model_min, model_max, pretrained_dict):
+    model_min_dict = model_min.state_dict()
+    model_max_dict = model_max.state_dict()
+    loaded_keys = []
+
+    for key, value in pretrained_dict.items():
+        if key in model_min_dict and value.size() == model_min_dict[key].size():
+            model_min_dict[key] = value
+            model_max_dict[key] = value
+            loaded_keys.append(key)
+        else:
+            print(f"Skipping layer {key} because of size mismatch")
+
+    model_min.load_state_dict(model_min_dict)
+    model_max.load_state_dict(model_max_dict)
+    print(f"Loaded {len(loaded_keys)} matching ResNet layers into model_min/model_max")
+
+
 class HPF(nn.Module):
   def __init__(self):
     super(HPF, self).__init__()
@@ -211,39 +259,35 @@ class AIDE_Model(nn.Module):
         self.hpf = HPF()
         self.model_min = ResNet(Bottleneck, [3, 4, 6, 3])
         self.model_max = ResNet(Bottleneck, [3, 4, 6, 3])
-       
-        if resnet_path is not None:
-            pretrained_dict = torch.load(resnet_path, map_location='cpu')
-        
-            model_min_dict = self.model_min.state_dict()
-            model_max_dict = self.model_max.state_dict()
-    
-            for k in pretrained_dict.keys():
-                if k in model_min_dict and pretrained_dict[k].size() == model_min_dict[k].size():
-                    model_min_dict[k] = pretrained_dict[k]
-                    model_max_dict[k] = pretrained_dict[k]
-                else:
-                    print(f"Skipping layer {k} because of size mismatch")
+
+        pretrained_dict = _load_resnet_weights(resnet_path)
+        _load_matching_resnet_weights(self.model_min, self.model_max, pretrained_dict)
         
         self.fc = Mlp(2048 + 256 , 1024, 2)
 
-        print("build model with convnext_xxl")
-        self.openclip_convnext_xxl, _, _ = open_clip.create_model_and_transforms(
-            "convnext_xxlarge", pretrained=convnext_path
+        if not convnext_path:
+            convnext_path = DEFAULT_CONVNEXT_BASE_PRETRAINED
+            print(f"load default OpenCLIP ConvNeXt-Base from model zoo: {convnext_path}")
+        else:
+            print(f"load OpenCLIP ConvNeXt-Base from {convnext_path}")
+
+        print("build model with convnext_base")
+        self.openclip_convnext_base, _, _ = open_clip.create_model_and_transforms(
+            "convnext_base", pretrained=convnext_path
         )
 
-        self.openclip_convnext_xxl = self.openclip_convnext_xxl.visual.trunk
-        self.openclip_convnext_xxl.head.global_pool = nn.Identity()
-        self.openclip_convnext_xxl.head.flatten = nn.Identity()
+        self.openclip_convnext_base = self.openclip_convnext_base.visual.trunk
+        self.openclip_convnext_base.head.global_pool = nn.Identity()
+        self.openclip_convnext_base.head.flatten = nn.Identity()
 
-        self.openclip_convnext_xxl.eval()
+        self.openclip_convnext_base.eval()
         
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.convnext_proj = nn.Sequential(
-            nn.Linear(3072, 256),
+            nn.Linear(1024, 256),
 
         )
-        for param in self.openclip_convnext_xxl.parameters():
+        for param in self.openclip_convnext_base.parameters():
             param.requires_grad = False
 
     
@@ -272,10 +316,10 @@ class AIDE_Model(nn.Module):
             dinov2_mean = torch.Tensor([0.485, 0.456, 0.406]).to(tokens, non_blocking=True).view(3, 1, 1)
             dinov2_std = torch.Tensor([0.229, 0.224, 0.225]).to(tokens, non_blocking=True).view(3, 1, 1)
 
-            local_convnext_image_feats = self.openclip_convnext_xxl(
+            local_convnext_image_feats = self.openclip_convnext_base(
                 tokens * (dinov2_std / clip_std) + (dinov2_mean - clip_mean) / clip_std
-            ) #[b, 3072, 8, 8]
-            assert local_convnext_image_feats.size()[1:] == (3072, 8, 8)
+            ) #[b, 1024, 8, 8]
+            assert local_convnext_image_feats.size()[1:] == (1024, 8, 8)
             local_convnext_image_feats = self.avgpool(local_convnext_image_feats).view(tokens.size(0), -1)
             x_0 = self.convnext_proj(local_convnext_image_feats)
 

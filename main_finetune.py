@@ -23,7 +23,7 @@ from timm.loss import LabelSmoothingCrossEntropy, SoftTargetCrossEntropy
 from timm.utils import ModelEma
 from optim_factory import create_optimizer, LayerDecayValueAssigner
 
-from data.datasets import TrainDataset, TestDataset
+from data.datasets import TrainDataset, TestDataset, is_hf_dataset_path
 from engine_finetune import train_one_epoch, evaluate
 
 import utils
@@ -131,7 +131,7 @@ def get_args_parser():
     parser.add_argument('--model_prefix', default='', type=str)
 
     # Dataset parameters
-    parser.add_argument('--data_path', default='path/dataset', type=str,
+    parser.add_argument('--data_path', default='../data/dateset_v1', type=str,
                         help='dataset path')
     parser.add_argument('--nb_classes', default=2, type=int,
                         help='number of the classification types')
@@ -315,20 +315,33 @@ def main(args):
 
     if args.eval:
         print(f"Eval only mode")
-        
-        vals = os.listdir(args.eval_data_path)
-        if len(vals) == 16:
-            vals = ["progan", "stylegan", "biggan", "cyclegan", "stargan", "gaugan", "stylegan2", "whichfaceisreal", "ADM", "Glide", "Midjourney", "stable_diffusion_v_1_4", "stable_diffusion_v_1_5", "VQDM", "wukong", "DALLE2"]
-        if len(vals) == 8:
-            vals = ["Midjourney", "stable_diffusion_v_1_4", "stable_diffusion_v_1_5", "ADM", "glide", "wukong", "VQDM", "BigGAN"]
-        eval_data_path = args.eval_data_path
+
+        eval_data_path = args.eval_data_path or args.data_path
+        eval_entries = os.listdir(eval_data_path)
+        direct_eval = (
+            is_hf_dataset_path(eval_data_path)
+            or
+            ('real' in eval_entries and 'fake' in eval_entries)
+            or ('0_real' in eval_entries and '1_fake' in eval_entries)
+        )
+
+        if direct_eval:
+            vals = [os.path.basename(os.path.normpath(eval_data_path))]
+            eval_paths = [eval_data_path]
+        else:
+            vals = eval_entries
+            if len(vals) == 16:
+                vals = ["progan", "stylegan", "biggan", "cyclegan", "stargan", "gaugan", "stylegan2", "whichfaceisreal", "ADM", "Glide", "Midjourney", "stable_diffusion_v_1_4", "stable_diffusion_v_1_5", "VQDM", "wukong", "DALLE2"]
+            if len(vals) == 8:
+                vals = ["Midjourney", "stable_diffusion_v_1_4", "stable_diffusion_v_1_5", "ADM", "glide", "wukong", "VQDM", "BigGAN"]
+            eval_paths = [os.path.join(eval_data_path, val) for val in vals]
 
         rows = [["{} model testing on...".format(args.resume)],
             ['testset', 'accuracy', 'avg precision']]
 
-        for v_id, val in enumerate(vals):
+        for val, eval_path in zip(vals, eval_paths):
             
-            args.eval_data_path = os.path.join(args.eval_data_path, val)
+            args.eval_data_path = eval_path
             dataset_val = TestDataset(is_train=False, args=args)
             args.eval_data_path = eval_data_path
 
@@ -360,7 +373,7 @@ def main(args):
             rows.append([val, acc, ap])
 
 
-        test_dataset_name  = args.eval_data_path.split('/')[-2]
+        test_dataset_name = os.path.basename(os.path.normpath(eval_data_path))
 
         csv_name = os.path.join(args.output_dir, f'{os.path.basename(args.resume)}_{test_dataset_name}.csv')
         with open(csv_name, 'w') as f:
